@@ -9,8 +9,7 @@ void setup_logging()
         auto file_logger = spdlog::basic_logger_mt("file_logger", "../logs/derbit_trading.log", true);
         spdlog::register_logger(file_logger);
         spdlog::set_default_logger(file_logger);
-
-        spdlog::set_level(spdlog::level::debug);
+        spdlog::set_level(spdlog::level::info);
         spdlog::info("Logging setup complete.");
     } 
     catch (const spdlog::spdlog_ex& ex) 
@@ -39,7 +38,6 @@ int main()
     std::string clientId = "cyL_105V";
     std::string clientSecret = "QYDbVHNoHm_6glxbgasvdCnBh3yIr1eQJKelNAi2Ejk";
 
-    spdlog::set_level(spdlog::level::info);
     setup_logging();
 
     nlohmann::json payload = {
@@ -69,7 +67,14 @@ int main()
                 {   
                     client.connect();
                     nlohmann::json response = client.sendRequest("/api/v2/public/auth", "POST ", payload);
-                    //spdlog::info("Response: {}", response.dump(4));
+
+                    if (response.contains("result") && response["result"].contains("access_token")) 
+                    {
+                        std::string accessToken = response["result"]["access_token"];
+                        client.setAccessToken(accessToken);
+                        spdlog::info("Authenticated successfully. Access token: {}", accessToken);
+                    }
+
                     spdlog::info("Connected succesfully...");
                 } 
                 catch (const std::exception& ex) 
@@ -89,7 +94,7 @@ int main()
                 std::string order_type;
                 std::cout << "Enter instrument name, amount, price, and order type: ";
                 std::cin >> instrument >> amount >> price >> order_type;
-                //client.placeOrder(instrument, amount, price, order_type);
+                client.placeOrder(instrument, amount, price, order_type);
                 auto end = std::chrono::high_resolution_clock::now();
                 std::chrono::duration<double> duration = end - start;
                 spdlog::info("Program latency: {} seconds", duration.count());

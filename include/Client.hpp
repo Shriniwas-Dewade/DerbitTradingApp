@@ -16,7 +16,7 @@ private:
     boost::asio::ssl::context _ssl_context;
     std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_stream;
 
-    std::string _host, _port, _clientId, _secreatKey;
+    std::string _host, _port, _clientId, _secreatKey, _accessToken;
 
 public:
     Client(const std::string& host, const std::string& port, const std::string& clientId, const std::string& secreatKey);
@@ -24,8 +24,10 @@ public:
     
     void connect();
     nlohmann::json sendRequest(const std::string& endpoint, const std::string& method, const nlohmann::json& payload);
+    std::string getAccessToken();
+    void setAccessToken(std::string &token);
 
-    // void placeOrder(const std::string& instrument_name, double amount, double price, const std::string& order_type);
+    void placeOrder(const std::string& instrument_name, double amount, double price, const std::string& order_type);
     // void modifyOrder(const std::string& order_id, double amount, double price);
     // void cancelOrder(const std::string& order_id);
     // void ListOrders();

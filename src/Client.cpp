@@ -43,26 +43,37 @@ Client::~Client()
     }
 }
 
+std::string Client::getAccessToken()
+{
+    return _accessToken;
+}
+
+void Client::setAccessToken(std::string &token)
+{
+    _accessToken = token;
+}
+
 nlohmann::json Client::sendRequest(const std::string& endpoint, const std::string& method, const nlohmann::json& payload) 
 {
-
-    if (ssl_stream->lowest_layer().is_open()) 
-    {
-        spdlog::info("Reusing existing connection to {}:{}", _host, _port);
-        return "";
-    }
-
     try 
     {
         std::string serialized_payload = payload.dump();
 
         std::ostringstream request_stream;
         request_stream << method << " " << endpoint << " HTTP/1.1\r\n"
-                       << "Host: " << _host << "\r\n"
-                       << "Content-Type: application/json\r\n"
-                       << "Content-Length: " << serialized_payload.size() << "\r\n"
-                       << "Connection: keep-alive\r\n\r\n"
-                       << serialized_payload;
+                    << "Host: " << _host << "\r\n";
+
+        if (!_accessToken.empty()) 
+        {
+            request_stream << "Authorization: Bearer " << _accessToken << "\r\n";
+            spdlog::info("Access token has been applied.");
+        }
+
+        request_stream << "Content-Type: application/json\r\n"
+                    << "Content-Length: " << serialized_payload.size() << "\r\n"
+                    << "Connection: keep-alive\r\n\r\n"
+                    << serialized_payload;
+
 
         boost::asio::write(*ssl_stream, boost::asio::buffer(request_stream.str()));
 
@@ -113,11 +124,50 @@ nlohmann::json Client::sendRequest(const std::string& endpoint, const std::strin
     catch (const nlohmann::json::exception& ex)
     {
         spdlog::error("JSON parsing error: {}", ex.what());
-        throw;
     } 
     catch (const std::exception& ex)
     {
         spdlog::error("Request error: {}", ex.what());
+    }
+}
+
+void Client::placeOrder(const std::string& instrument_name, double amount, double price, const std::string& order_type)
+{
+    nlohmann::json payloadPlaceOrder = {
+        {"jsonrpc", "2.0"},
+        {"id", 1},
+        {"method", "private/buy"},
+        {"params", {
+            {"instrument_name", instrument_name},
+            {"amount", amount},
+            {"type", order_type},
+            {"time_in_force", "good_til_cancelled"},
+            {"reduce_only", false},
+            {"post_only", false},
+            {"label", "test-order"}
+        }}
+    };
+
+    if (order_type != "market") {
+        payloadPlaceOrder["params"]["price"] = price;
+    }
+
+    try
+    {
+        nlohmann::json response = sendRequest("/api/v2/private/buy", "POST", payloadPlaceOrder);
+
+        if (!response.is_null() && response.contains("error")) 
+        {
+            spdlog::error("Order placement failed: {}", response["error"].dump(4));
+            throw std::runtime_error("Order placement error");
+        }
+
+        spdlog::info("Order placed successfully: {}", response.dump(4));
+    }
+    catch (const std::exception& e)
+    {
+        spdlog::error("PlaceOrder Request error: {}", e.what());
         throw;
     }
 }
+
