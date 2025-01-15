@@ -46,7 +46,6 @@ int main()
         {"method", "public/auth"},
         {"params", {
             {"grant_type", "client_credentials"},
-            {"scope", "session:api:console=c5126dsd6sdr expires:2592000"},
             {"client_id", clientId},
             {"client_secret", clientSecret}
         }}

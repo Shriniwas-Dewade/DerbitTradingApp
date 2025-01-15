@@ -3,6 +3,23 @@
 #include <boost/asio/ssl/error.hpp>
 #include <boost/asio/write.hpp>
 
+void printCurlCommand(const std::string& endpoint, const nlohmann::json& payload, const std::string& token) 
+{
+    std::string jsonStr = payload.dump();
+
+    std::string curlCmd = "curl -X POST";
+    curlCmd += " \"" + endpoint + "\"";
+
+    curlCmd += " -H \"Content-Type: application/json\"";
+    if (!token.empty()) {
+        curlCmd += " -H \"Authorization: Bearer " + token + "\"";
+    }
+
+    curlCmd += " -d '" + jsonStr + "'";
+
+    std::cout << "Equivalent curl command:\n" << curlCmd << std::endl;
+}
+
 Client::Client(const std::string& host, const std::string& port, const std::string& clientId, const std::string& secreatKey)
     : _ssl_context(boost::asio::ssl::context::sslv23), _host(host), _port(port), _clientId(clientId), _secreatKey(secreatKey)
 {
@@ -78,7 +95,23 @@ nlohmann::json Client::sendRequest(const std::string& endpoint, const std::strin
         boost::asio::write(*ssl_stream, boost::asio::buffer(request_stream.str()));
 
         boost::asio::streambuf response_buffer;
-        boost::asio::read_until(*ssl_stream, response_buffer, "\r\n\r\n");
+
+        try
+		{
+    		boost::asio::read_until(*ssl_stream, response_buffer, "\r\n\r\n");
+		}
+		catch (const boost::system::system_error& e)
+		{
+    		if (e.code() == boost::asio::error::eof)
+    		{
+        		spdlog::error("Connection closed by server before reading response: {}", e.what());
+    		} 
+    		else 
+    		{
+        		spdlog::error("Error while reading response: {}", e.what());
+    		}
+    		throw;
+		}
 
         std::istream response_stream(&response_buffer);
         std::string http_version;
@@ -140,17 +173,15 @@ void Client::placeOrder(const std::string& instrument_name, double amount, doubl
         {"params", {
             {"instrument_name", instrument_name},
             {"amount", amount},
-            {"type", order_type},
-            {"time_in_force", "good_til_cancelled"},
-            {"reduce_only", false},
-            {"post_only", false},
-            {"label", "test-order"}
+            {"type", order_type}
         }}
     };
 
     if (order_type != "market") {
         payloadPlaceOrder["params"]["price"] = price;
     }
+
+    printCurlCommand("/api/v2/private/buy", payloadPlaceOrder, _accessToken);
 
     try
     {
