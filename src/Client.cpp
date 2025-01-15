@@ -1,24 +1,10 @@
 #include "Client.hpp"
+#include <chrono>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ssl/error.hpp>
 #include <boost/asio/write.hpp>
 
-void printCurlCommand(const std::string& endpoint, const nlohmann::json& payload, const std::string& token) 
-{
-    std::string jsonStr = payload.dump();
-
-    std::string curlCmd = "curl -X POST";
-    curlCmd += " \"" + endpoint + "\"";
-
-    curlCmd += " -H \"Content-Type: application/json\"";
-    if (!token.empty()) {
-        curlCmd += " -H \"Authorization: Bearer " + token + "\"";
-    }
-
-    curlCmd += " -d '" + jsonStr + "'";
-
-    std::cout << "Equivalent curl command:\n" << curlCmd << std::endl;
-}
+using json = nlohmann::json;
 
 Client::Client(const std::string& host, const std::string& port, const std::string& clientId, const std::string& secreatKey)
     : _ssl_context(boost::asio::ssl::context::sslv23), _host(host), _port(port), _clientId(clientId), _secreatKey(secreatKey)
@@ -70,8 +56,9 @@ void Client::setAccessToken(std::string &token)
     _accessToken = token;
 }
 
-nlohmann::json Client::sendRequest(const std::string& endpoint, const std::string& method, const nlohmann::json& payload) 
+json Client::sendRequest(const std::string& endpoint, const std::string& method, const json& payload) 
 {
+    auto start = std::chrono::high_resolution_clock::now();
     try 
     {
         std::string serialized_payload = payload.dump();
@@ -151,10 +138,13 @@ nlohmann::json Client::sendRequest(const std::string& endpoint, const std::strin
             std::istreambuf_iterator<char> it(&response_buffer), end;
             response_body.append(it, end);
         }
-
-        return nlohmann::json::parse(response_body);
+        
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> duration = end - start;
+        spdlog::info("Program latency: {} seconds", duration.count());
+        return json::parse(response_body);
     } 
-    catch (const nlohmann::json::exception& ex)
+    catch (const json::exception& ex)
     {
         spdlog::error("JSON parsing error: {}", ex.what());
     } 
@@ -162,11 +152,13 @@ nlohmann::json Client::sendRequest(const std::string& endpoint, const std::strin
     {
         spdlog::error("Request error: {}", ex.what());
     }
+
+    return json();
 }
 
 void Client::placeOrder(const std::string& instrument_name, double amount, double price, const std::string& order_type)
 {
-    nlohmann::json payloadPlaceOrder = {
+    json payloadPlaceOrder = {
         {"jsonrpc", "2.0"},
         {"id", 1},
         {"method", "private/buy"},
@@ -181,11 +173,9 @@ void Client::placeOrder(const std::string& instrument_name, double amount, doubl
         payloadPlaceOrder["params"]["price"] = price;
     }
 
-    printCurlCommand("/api/v2/private/buy", payloadPlaceOrder, _accessToken);
-
     try
     {
-        nlohmann::json response = sendRequest("/api/v2/private/buy", "POST", payloadPlaceOrder);
+        json response = sendRequest("/api/v2/private/buy", "POST", payloadPlaceOrder);
 
         if (!response.is_null() && response.contains("error")) 
         {
@@ -202,3 +192,120 @@ void Client::placeOrder(const std::string& instrument_name, double amount, doubl
     }
 }
 
+void Client::cancelOrder(const std::string& order_id)
+{
+    json cancelOrderPayload = {
+        {"jsonrpc", "2.0"},
+        {"id", 2},
+        {"method", "private/cancel"},
+        {"params", {
+            {"order_id", order_id}
+        }}
+    };
+
+    try
+    {
+        json response = sendRequest("/api/v2/private/cancel", "POST", cancelOrderPayload);
+        if (response.contains("result")) 
+        {
+            spdlog::info("Order Cancled Successfully...");
+        } 
+        else 
+        {
+            spdlog::warn("Something weird happens : {}", response.dump(4));
+        }
+    }
+    catch(const std::exception& e)
+    {
+        spdlog::error("Order Cancel Request error: {}", e.what());
+        throw;
+    }
+}
+
+void Client::modifyOrder(const std::string& order_id, double amount, double price)
+{
+    json orderModifyPayload = {
+        {"jsonrpc", "2.0"},
+        {"id", 4},
+        {"method", "private/edit"},
+        {"params", {
+            {"order_id", order_id},
+            {"amount", amount},
+            {"price", price}
+        }}
+    };
+
+    try
+    {
+        json response = sendRequest("/api/v2/private/edit", "POST", orderModifyPayload);
+        if (response.contains("result")) 
+        {
+            spdlog::info("Order modified Successfully...");
+        } 
+        else 
+        {
+            spdlog::warn("Something weird happens : {}", response.dump(4));
+        }
+    }
+    catch(const std::exception& e)
+    {
+        spdlog::error("Order modify Request error: {}", e.what());
+    }
+}
+
+void Client::getOrderBook(const std::string& instrument_name)
+{
+    json orderModifyPayload = {
+        {"jsonrpc", "2.0"},
+        {"id", 4},
+        {"method", "public/get_open_orders"},
+        {"params", {
+            {"instrument_name", instrument_name}
+        }}
+    };
+
+    try
+    {
+        json response = sendRequest("/api/v2/private/get_open_orders", "POST", orderModifyPayload);
+        if (response.contains("result")) 
+        {
+            spdlog::info("Order Book : {}", response.dump(4));
+        } 
+        else 
+        {
+            spdlog::warn("No Order Book found.");
+        }
+    }
+    catch(const std::exception& e)
+    {
+        spdlog::error("Order Book Request error: {}", e.what());
+    }
+}
+
+void Client::viewCurrentPositions()
+{
+     json payload = {
+        {"jsonrpc", "2.0"},
+        {"id", 5},
+        {"method", "private/get_positions"},
+        {"params", {}}
+    };
+
+    try
+    {
+        json response = sendRequest("/api/v2/private/get_positions", "POST", payload);
+
+        if (response.contains("result")) 
+        {
+            spdlog::info("Open Positions: {}", response["result"].dump(4));
+        } 
+        else 
+        {
+            spdlog::warn("No open positions found.");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        spdlog::error("Error fetching open positions: {}", e.what());
+    }
+}

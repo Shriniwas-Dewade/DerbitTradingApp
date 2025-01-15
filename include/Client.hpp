@@ -28,10 +28,10 @@ public:
     void setAccessToken(std::string &token);
 
     void placeOrder(const std::string& instrument_name, double amount, double price, const std::string& order_type);
-    // void modifyOrder(const std::string& order_id, double amount, double price);
-    // void cancelOrder(const std::string& order_id);
-    // void ListOrders();
-    // void viewCurrentPositions();
+    void modifyOrder(const std::string& order_id, double amount, double price);
+    void cancelOrder(const std::string& order_id);
+    void getOrderBook(const std::string& instrument_name);
+    void viewCurrentPositions();
 };
 
 

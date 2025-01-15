@@ -1,5 +1,4 @@
 #include "Client.hpp"
-#include <chrono>
 #include "spdlog/sinks/basic_file_sink.h"
 
 void setup_logging() 
@@ -20,11 +19,13 @@ void setup_logging()
 
 void printMenu() 
 {
-    std::cout << "1. Connect to Deribit\n";
+    std::cout << "\n1. Connect to Deribit\n";
     std::cout << "2. Place Order\n";
     std::cout << "3. Cancel Order\n";
     std::cout << "4. Modify Order\n";
-    std::cout << "5. Exit\n";
+    std::cout << "5. Get Order Book\n";
+    std::cout << "6. View current positions\n";
+    std::cout << "7. Exit.\n";
     std::cout << "Enter your choice: ";
 }
 
@@ -61,70 +62,60 @@ int main()
         {
             case 1:
             {
-                auto start = std::chrono::high_resolution_clock::now();
-                try 
-                {   
-                    client.connect();
-                    nlohmann::json response = client.sendRequest("/api/v2/public/auth", "POST ", payload);
+                client.connect();
+                nlohmann::json response = client.sendRequest("/api/v2/public/auth", "POST ", payload);
 
-                    if (response.contains("result") && response["result"].contains("access_token")) 
-                    {
-                        std::string accessToken = response["result"]["access_token"];
-                        client.setAccessToken(accessToken);
-                        spdlog::info("Authenticated successfully. Access token: {}", accessToken);
-                    }
-
-                    spdlog::info("Connected succesfully...");
-                } 
-                catch (const std::exception& ex) 
+                if (response.contains("result") && response["result"].contains("access_token")) 
                 {
-                    spdlog::error("Application error: {}", ex.what());
+                    std::string accessToken = response["result"]["access_token"];
+                    client.setAccessToken(accessToken);
+                    spdlog::info("Authenticated successfully. Access token: {}", accessToken);
                 }
-                auto end = std::chrono::high_resolution_clock::now();
-                std::chrono::duration<double> duration = end - start;
-                spdlog::info("Program latency: {} seconds", duration.count());
+
+                spdlog::info("Connected succesfully...");
                 break;
             }
             case 2: 
             {
-                auto start = std::chrono::high_resolution_clock::now();
                 std::string instrument;
                 double amount, price;
                 std::string order_type;
                 std::cout << "Enter instrument name, amount, price, and order type: ";
                 std::cin >> instrument >> amount >> price >> order_type;
                 client.placeOrder(instrument, amount, price, order_type);
-                auto end = std::chrono::high_resolution_clock::now();
-                std::chrono::duration<double> duration = end - start;
-                spdlog::info("Program latency: {} seconds", duration.count());
                 break;
             }
             case 3: 
             {
-                auto start = std::chrono::high_resolution_clock::now();
                 std::string order_id;
                 std::cout << "Enter order ID to cancel: ";
                 std::cin >> order_id;
-                auto end = std::chrono::high_resolution_clock::now();
-                std::chrono::duration<double> duration = end - start;
-                spdlog::info("Program latency: {} seconds", duration.count());
-                //client.cancelOrder(order_id);
+                client.cancelOrder(order_id);
                 break;
             }
             case 4: 
             {
-                auto start = std::chrono::high_resolution_clock::now();
                 std::string order_id;
                 double amount, price;
                 std::cout << "Enter order ID, new amount, and new price to modify order: ";
                 std::cin >> order_id >> amount >> price;
-                //client.modifyOrder(order_id, amount, price);
-                auto end = std::chrono::high_resolution_clock::now();
-                std::chrono::duration<double> duration = end - start;
-                spdlog::info("Program latency: {} seconds", duration.count());
+                client.modifyOrder(order_id, amount, price);
                 break;
             }
             case 5:
+            {
+                std::string instrument_name;
+                std::cout<<"Enter Instrument Name : ";
+                std::cin >> instrument_name;
+                client.getOrderBook(instrument_name);
+                break;
+            }
+            case 6:
+            {
+                client.viewCurrentPositions();
+                break;
+            }
+            case 7:
             {
                 return 0;
             }
