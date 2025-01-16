@@ -19,13 +19,12 @@ void setup_logging()
 
 void printMenu() 
 {
-    std::cout << "\n1. Connect to Deribit\n";
-    std::cout << "2. Place Order\n";
-    std::cout << "3. Cancel Order\n";
-    std::cout << "4. Modify Order\n";
-    std::cout << "5. Get Order Book\n";
-    std::cout << "6. View current positions\n";
-    std::cout << "7. Exit.\n";
+    std::cout << "\n1. Place Order\n";
+    std::cout << "2. Cancel Order\n";
+    std::cout << "3. Modify Order\n";
+    std::cout << "4. Get Order Book\n";
+    std::cout << "5. View current positions\n";
+    std::cout << "6. Exit.\n";
     std::cout << "Enter your choice: ";
 }
 
@@ -54,28 +53,32 @@ int main()
 
     Client client("test.deribit.com", "443", clientId, clientSecret);
 
+    try
+    {
+        client.connect();
+        nlohmann::json response = client.sendRequest("/api/v2/public/auth", "POST ", payload);
+
+        if (response.contains("result") && response["result"].contains("access_token")) 
+        {
+            std::string accessToken = response["result"]["access_token"];
+            client.setAccessToken(accessToken);
+            spdlog::info("Authenticated successfully. Access token: {}", accessToken);
+        }
+
+        spdlog::info("Connected succesfully...");
+    }
+    catch(const std::exception& e)
+    {
+        spdlog::info("Something goes wrong : {}", e.what());
+    }
+
     while (true) 
     {
         printMenu();
         std::cin >> choice;
         switch (choice) 
         {
-            case 1:
-            {
-                client.connect();
-                nlohmann::json response = client.sendRequest("/api/v2/public/auth", "POST ", payload);
-
-                if (response.contains("result") && response["result"].contains("access_token")) 
-                {
-                    std::string accessToken = response["result"]["access_token"];
-                    client.setAccessToken(accessToken);
-                    spdlog::info("Authenticated successfully. Access token: {}", accessToken);
-                }
-
-                spdlog::info("Connected succesfully...");
-                break;
-            }
-            case 2: 
+            case 1: 
             {
                 std::string instrument;
                 double amount, price;
@@ -85,7 +88,7 @@ int main()
                 client.placeOrder(instrument, amount, price, order_type);
                 break;
             }
-            case 3: 
+            case 2: 
             {
                 std::string order_id;
                 std::cout << "Enter order ID to cancel: ";
@@ -93,7 +96,7 @@ int main()
                 client.cancelOrder(order_id);
                 break;
             }
-            case 4: 
+            case 3: 
             {
                 std::string order_id;
                 double amount, price;
@@ -102,7 +105,7 @@ int main()
                 client.modifyOrder(order_id, amount, price);
                 break;
             }
-            case 5:
+            case 4:
             {
                 std::string instrument_name;
                 std::cout<<"Enter Instrument Name : ";
@@ -110,12 +113,12 @@ int main()
                 client.getOrderBook(instrument_name);
                 break;
             }
-            case 6:
+            case 5:
             {
                 client.viewCurrentPositions();
                 break;
             }
-            case 7:
+            case 6:
             {
                 return 0;
             }

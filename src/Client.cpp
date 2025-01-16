@@ -151,6 +151,8 @@ json Client::sendRequest(const std::string& endpoint, const std::string& method,
     catch (const std::exception& ex)
     {
         spdlog::error("Request error: {}", ex.what());
+        ssl_stream->lowest_layer().close();
+        authenticate();
     }
 
     return json();
@@ -169,7 +171,8 @@ void Client::placeOrder(const std::string& instrument_name, double amount, doubl
         }}
     };
 
-    if (order_type != "market") {
+    if (order_type != "market") 
+    {
         payloadPlaceOrder["params"]["price"] = price;
     }
 
@@ -258,15 +261,16 @@ void Client::getOrderBook(const std::string& instrument_name)
     json orderModifyPayload = {
         {"jsonrpc", "2.0"},
         {"id", 4},
-        {"method", "public/get_open_orders"},
+        {"method", "public/get_order_book"},
         {"params", {
-            {"instrument_name", instrument_name}
+            {"instrument_name", instrument_name},
+            {"depth", 5}
         }}
     };
 
     try
     {
-        json response = sendRequest("/api/v2/private/get_open_orders", "POST", orderModifyPayload);
+        json response = sendRequest("/api/v2/public/get_order_book", "POST", orderModifyPayload);
         if (response.contains("result")) 
         {
             spdlog::info("Order Book : {}", response.dump(4));
@@ -301,11 +305,44 @@ void Client::viewCurrentPositions()
         } 
         else 
         {
-            spdlog::warn("No open positions found.");
+            spdlog::warn("No open positions found : {}", response.dump(4));
         }
     }
     catch (const std::exception& e)
     {
         spdlog::error("Error fetching open positions: {}", e.what());
+    }
+}
+
+void Client::authenticate()
+{
+    nlohmann::json payload = {
+        {"jsonrpc", "2.0"},
+        {"id", 0},
+        {"method", "public/auth"},
+        {"params", {
+            {"grant_type", "client_credentials"},
+            {"client_id", _clientId},
+            {"client_secret", _secreatKey}
+        }}
+    };
+
+    try
+    {
+        connect();
+        nlohmann::json response = sendRequest("/api/v2/public/auth", "POST ", payload);
+
+        if (response.contains("result") && response["result"].contains("access_token")) 
+        {
+            std::string accessToken = response["result"]["access_token"];
+            setAccessToken(accessToken);
+            spdlog::info("Authenticated successfully. Access token: {}", accessToken);
+        }
+
+        spdlog::info("Connected succesfully...");
+    }
+    catch(const std::exception& e)
+    {
+        spdlog::info("Something goes wrong : {}", e.what());
     }
 }

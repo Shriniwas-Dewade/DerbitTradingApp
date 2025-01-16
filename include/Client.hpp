@@ -23,6 +23,7 @@ public:
     ~Client();
     
     void connect();
+    void authenticate();
     nlohmann::json sendRequest(const std::string& endpoint, const std::string& method, const nlohmann::json& payload);
     std::string getAccessToken();
     void setAccessToken(std::string &token);
