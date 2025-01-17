@@ -7,7 +7,7 @@
 using json = nlohmann::json;
 
 Client::Client(const std::string& host, const std::string& port, const std::string& clientId, const std::string& secreatKey)
-    : _ssl_context(boost::asio::ssl::context::sslv23), _host(host), _port(port), _clientId(clientId), _secreatKey(secreatKey)
+    : _ws(boost::asio::ip::tcp::socket(_io_context)), _ssl_context(boost::asio::ssl::context::sslv23_client), _host(host), _port(port), _clientId(clientId), _secreatKey(secreatKey)
 {
     ssl_stream = std::make_shared<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>(_io_context, _ssl_context);
 }
@@ -19,9 +19,10 @@ void Client::connect()
         boost::asio::ip::tcp::resolver resolver(_io_context);
         auto endpoints = resolver.resolve(_host, _port);
         boost::asio::connect(ssl_stream->lowest_layer(), endpoints);
-
         ssl_stream->handshake(boost::asio::ssl::stream_base::client);
         spdlog::info("Connected to {}:{}", _host, _port);
+
+        startPing();
     } 
     catch (const boost::system::system_error& ex) 
     {
@@ -38,6 +39,13 @@ Client::~Client()
         {
             ssl_stream->lowest_layer().close();
         }
+        
+        if (_ws.is_open()) 
+        {
+            _ws.close(boost::beast::websocket::close_code::normal);
+        }
+
+        stopPing();
         spdlog::info("Client resources cleaned up.");
     } 
     catch (const std::exception& ex) 
@@ -45,6 +53,88 @@ Client::~Client()
         spdlog::error("Error during resource cleanup: {}", ex.what());
     }
 }
+
+void Client::printMenu() 
+{
+    std::cout << "\n1. Place Order\n";
+    std::cout << "2. Cancel Order\n";
+    std::cout << "3. Modify Order\n";
+    std::cout << "4. Get Order Book\n";
+    std::cout << "5. View Current Positions\n";
+    std::cout << "6. Subscribe to Market Data\n";
+    std::cout << "7. Exit.\n";
+    std::cout << "Enter your choice: ";
+}
+
+void Client::pingServer() 
+{
+    try 
+    {
+        nlohmann::json payload = {
+            {"jsonrpc", "2.0"},
+            {"id", 1},
+            {"method", "public/test"}, 
+            {"params", {}}
+        };
+
+        auto response = sendRequest("/api/v2/public/test", "GET", payload);
+
+        if (!response.is_null()) 
+        {
+            spdlog::info("Ping successful. Connection is alive.");
+            printMenu();
+        } 
+        else 
+        {
+            spdlog::warn("Ping failed. Reconnecting...");
+            connect();
+        }
+    } 
+    catch (const std::exception& ex) 
+    {
+        spdlog::error("Ping error: {}", ex.what());
+        connect();
+    }
+}
+
+void Client::startPing() 
+{
+    is_running = true;
+    ping_timer = std::make_unique<boost::asio::steady_timer>(_io_context);
+
+    ping_thread = std::thread([this]() {
+        while (is_running) 
+        {
+            ping_timer->expires_after(std::chrono::seconds(50));
+
+            ping_timer->async_wait([this](const boost::system::error_code& ec) {
+                if (ec) 
+                {
+                    spdlog::error("Ping timer error: {}", ec.message());
+                } 
+                else 
+                {
+                    pingServer();
+                }
+            });
+
+            _io_context.run();
+            _io_context.restart();
+        }
+    });
+}
+
+void Client::stopPing() 
+{
+    is_running = false;
+    if (ping_timer) {
+        ping_timer->cancel();
+    }
+    if (ping_thread.joinable()) {
+        ping_thread.join();
+    }
+}
+
 
 std::string Client::getAccessToken()
 {
@@ -70,7 +160,6 @@ json Client::sendRequest(const std::string& endpoint, const std::string& method,
         if (!_accessToken.empty()) 
         {
             request_stream << "Authorization: Bearer " << _accessToken << "\r\n";
-            spdlog::info("Access token has been applied.");
         }
 
         request_stream << "Content-Type: application/json\r\n"
@@ -83,22 +172,7 @@ json Client::sendRequest(const std::string& endpoint, const std::string& method,
 
         boost::asio::streambuf response_buffer;
 
-        try
-		{
-    		boost::asio::read_until(*ssl_stream, response_buffer, "\r\n\r\n");
-		}
-		catch (const boost::system::system_error& e)
-		{
-    		if (e.code() == boost::asio::error::eof)
-    		{
-        		spdlog::error("Connection closed by server before reading response: {}", e.what());
-    		} 
-    		else 
-    		{
-        		spdlog::error("Error while reading response: {}", e.what());
-    		}
-    		throw;
-		}
+        boost::asio::read_until(*ssl_stream, response_buffer, "\r\n\r\n");
 
         std::istream response_stream(&response_buffer);
         std::string http_version;
@@ -151,8 +225,6 @@ json Client::sendRequest(const std::string& endpoint, const std::string& method,
     catch (const std::exception& ex)
     {
         spdlog::error("Request error: {}", ex.what());
-        ssl_stream->lowest_layer().close();
-        authenticate();
     }
 
     return json();
@@ -160,21 +232,18 @@ json Client::sendRequest(const std::string& endpoint, const std::string& method,
 
 void Client::placeOrder(const std::string& instrument_name, double amount, double price, const std::string& order_type)
 {
-    json payloadPlaceOrder = {
-        {"jsonrpc", "2.0"},
-        {"id", 1},
-        {"method", "private/buy"},
-        {"params", {
-            {"instrument_name", instrument_name},
-            {"amount", amount},
-            {"type", order_type}
-        }}
+    json params = {
+        {"instrument_name", instrument_name},
+        {"amount", amount},
+        {"type", order_type}
     };
 
     if (order_type != "market") 
     {
-        payloadPlaceOrder["params"]["price"] = price;
+        params["price"] = price;
     }
+
+    json payloadPlaceOrder = getCachedPayload("/api/v2/private/buy", "private/buy", params);
 
     try
     {
@@ -197,14 +266,11 @@ void Client::placeOrder(const std::string& instrument_name, double amount, doubl
 
 void Client::cancelOrder(const std::string& order_id)
 {
-    json cancelOrderPayload = {
-        {"jsonrpc", "2.0"},
-        {"id", 2},
-        {"method", "private/cancel"},
-        {"params", {
-            {"order_id", order_id}
-        }}
+    json params = {
+        {"order_id", order_id}
     };
+
+    json cancelOrderPayload = getCachedPayload("/api/v2/private/cancel", "private/cancel", params);
 
     try
     {
@@ -227,16 +293,13 @@ void Client::cancelOrder(const std::string& order_id)
 
 void Client::modifyOrder(const std::string& order_id, double amount, double price)
 {
-    json orderModifyPayload = {
-        {"jsonrpc", "2.0"},
-        {"id", 4},
-        {"method", "private/edit"},
-        {"params", {
-            {"order_id", order_id},
-            {"amount", amount},
-            {"price", price}
-        }}
+    json params = {
+        {"order_id", order_id},
+        {"amount", amount},
+        {"price", price}
     };
+
+    json orderModifyPayload = getCachedPayload("/api/v2/private/edit", "private/edit", params);
 
     try
     {
@@ -258,15 +321,12 @@ void Client::modifyOrder(const std::string& order_id, double amount, double pric
 
 void Client::getOrderBook(const std::string& instrument_name)
 {
-    json orderModifyPayload = {
-        {"jsonrpc", "2.0"},
-        {"id", 4},
-        {"method", "public/get_order_book"},
-        {"params", {
-            {"instrument_name", instrument_name},
-            {"depth", 5}
-        }}
+    json params = {
+        {"instrument_name", instrument_name},
+        {"depth", 5}
     };
+
+    json orderModifyPayload = getCachedPayload("/api/v2/public/get_order_book", "public/get_order_book", params);
 
     try
     {
@@ -288,12 +348,10 @@ void Client::getOrderBook(const std::string& instrument_name)
 
 void Client::viewCurrentPositions()
 {
-     json payload = {
-        {"jsonrpc", "2.0"},
-        {"id", 5},
-        {"method", "private/get_positions"},
-        {"params", {}}
+    json params = {
     };
+
+    json payload = getCachedPayload("/api/v2/private/get_positions", "private/get_positions", params);
 
     try
     {
@@ -345,4 +403,121 @@ void Client::authenticate()
     {
         spdlog::info("Something goes wrong : {}", e.what());
     }
+}
+
+void Client::initWebSocket()
+{
+    try 
+    {
+        boost::asio::ip::tcp::resolver resolver(_io_context);
+        auto const results = resolver.resolve("test.deribit.com", "443");
+        boost::asio::connect(_ws.next_layer(), results.begin(), results.end());
+
+        _ws.handshake("test.deribit.com", "/ws/api/v2");
+
+        spdlog::info("WebSocket connection established.");
+    } 
+    catch (const std::exception& e) 
+    {
+        spdlog::error("WebSocket initialization error: {}", e.what());
+        throw;
+    }
+}
+
+void Client::subscribeToMarketData(const std::string& symbol)
+{
+    try 
+    {
+        nlohmann::json subscribePayload = {
+            {"jsonrpc", "2.0"},
+            {"id", 1},
+            {"method", "public/subscribe"},
+            {"params", {{"channels", {"book." + symbol + ".raw"}}}}
+        };
+
+        _ws.write(boost::asio::buffer(subscribePayload.dump()));
+        spdlog::info("Subscribed to symbol: {}", symbol);
+    } 
+    catch (const std::exception& e) 
+    {
+        spdlog::error("Subscription error: {}", e.what());
+        throw;
+    }
+}
+
+void Client::streamMarketData()
+{
+    try 
+    {
+        boost::beast::flat_buffer buffer;
+        while (true) 
+        {
+            _ws.read(buffer);
+            std::string message = boost::beast::buffers_to_string(buffer.data());
+            spdlog::info("Market Data Received: {}", message);
+            buffer.clear();
+        }
+    } 
+    catch (const std::exception& e) 
+    {
+        spdlog::error("Market data streaming error: {}", e.what());
+    }
+}
+
+void Client::addToCache(const std::string& key, const std::string& payload)
+{
+    if (payload.size() > max_payload_size) 
+    {
+        spdlog::warn("Payload size exceeds the maximum limit of {} characters. Skipping cache.", max_payload_size);
+        return;
+    }
+
+    if (payload_cache.find(key) != payload_cache.end()) 
+    {
+        cache_keys.remove(key);
+    } 
+    else if (cache_keys.size() >= max_cache_size) 
+    {
+        std::string lru_key = cache_keys.front();
+        cache_keys.pop_front();
+        payload_cache.erase(lru_key);
+    }
+
+    cache_keys.push_back(key);
+    payload_cache[key] = payload;
+}
+
+std::string Client::getFromCache(const std::string& key)
+{
+    if (payload_cache.find(key) != payload_cache.end()) 
+    {
+        cache_keys.remove(key);
+        cache_keys.push_back(key);
+        return payload_cache[key];
+    }
+    return "";
+}
+
+nlohmann::json Client::getCachedPayload(const std::string& endpoint, const std::string& method, const nlohmann::json& params)
+{
+    std::string key = endpoint + ":" + method + ":" + params.dump();
+
+    std::string cached_payload = getFromCache(key);
+    if (!cached_payload.empty()) 
+    {
+        spdlog::info("Using cached payload for key: {}", key);
+        return nlohmann::json::parse(cached_payload);
+    }
+
+    nlohmann::json payload = {
+        {"jsonrpc", "2.0"},
+        {"id", 1},
+        {"method", method},
+        {"params", params}
+    };
+
+    addToCache(key, payload.dump());
+    spdlog::info("Added new payload to cache for key: {}", key);
+
+    return payload;
 }

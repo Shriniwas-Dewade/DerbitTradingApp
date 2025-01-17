@@ -17,46 +17,35 @@ void setup_logging()
     }
 }
 
-void printMenu() 
-{
-    std::cout << "\n1. Place Order\n";
-    std::cout << "2. Cancel Order\n";
-    std::cout << "3. Modify Order\n";
-    std::cout << "4. Get Order Book\n";
-    std::cout << "5. View current positions\n";
-    std::cout << "6. Exit.\n";
-    std::cout << "Enter your choice: ";
-}
+constexpr const char* clientId = "cyL_105V";
+constexpr const char* clientSecret = "QYDbVHNoHm_6glxbgasvdCnBh3yIr1eQJKelNAi2Ejk";
+
+const nlohmann::json Client::payload = {
+    {"jsonrpc", "2.0"},
+    {"id", 0},
+    {"method", "public/auth"},
+    {"params", {
+        {"grant_type", "client_credentials"},
+        {"client_id", clientId},
+        {"client_secret", clientSecret}
+    }}
+};
 
 int main() 
 {
     std::ios_base::sync_with_stdio(false);
 
-    auto start = std::chrono::high_resolution_clock::now();
-    int choice;
-
-    std::string clientId = "cyL_105V";
-    std::string clientSecret = "QYDbVHNoHm_6glxbgasvdCnBh3yIr1eQJKelNAi2Ejk";
-
     setup_logging();
 
-    nlohmann::json payload = {
-        {"jsonrpc", "2.0"},
-        {"id", 0},
-        {"method", "public/auth"},
-        {"params", {
-            {"grant_type", "client_credentials"},
-            {"client_id", clientId},
-            {"client_secret", clientSecret}
-        }}
-    };
+    auto start = std::chrono::high_resolution_clock::now();
+    int choice;
 
     Client client("test.deribit.com", "443", clientId, clientSecret);
 
     try
     {
         client.connect();
-        nlohmann::json response = client.sendRequest("/api/v2/public/auth", "POST ", payload);
+        nlohmann::json response = client.sendRequest("/api/v2/public/auth", "POST ", client.payload);
 
         if (response.contains("result") && response["result"].contains("access_token")) 
         {
@@ -74,7 +63,7 @@ int main()
 
     while (true) 
     {
-        printMenu();
+        client.printMenu();
         std::cin >> choice;
         switch (choice) 
         {
@@ -118,7 +107,25 @@ int main()
                 client.viewCurrentPositions();
                 break;
             }
-            case 6:
+            case 6: 
+            {
+                std::string symbol;
+                std::cout << "Enter symbol for subscription (e.g., BTC-PERPETUAL): ";
+                std::cin >> symbol;
+
+                try 
+                {
+                    client.initWebSocket();
+                    client.subscribeToMarketData(symbol);
+                    client.streamMarketData();
+                } 
+                catch (const std::exception& e) 
+                {
+                    spdlog::error("WebSocket streaming error: {}", e.what());
+                }
+                break;
+            }
+            case 7:
             {
                 return 0;
             }

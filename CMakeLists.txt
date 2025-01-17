@@ -18,14 +18,12 @@ set(INCLUDE_DIR "${CMAKE_SOURCE_DIR}/include")
 find_package(Boost 1.74 REQUIRED COMPONENTS system)
 find_package(OpenSSL REQUIRED)
 
-# FetchContent for spdlog
 include(FetchContent)
 FetchContent_Declare(
   spdlog
   GIT_REPOSITORY https://github.com/gabime/spdlog.git
   GIT_TAG        v1.x 
 )
-
 FetchContent_MakeAvailable(spdlog)
 
 FetchContent_Declare(
