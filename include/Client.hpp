@@ -44,6 +44,7 @@ public:
     nlohmann::json sendRequest(const std::string& endpoint, const std::string& method, const nlohmann::json& payload);
     std::string getAccessToken();
     void printMenu();
+    void logLatency(const std::chrono::duration<double>& duration);
     void setAccessToken(std::string &token);
 
     void pingServer();

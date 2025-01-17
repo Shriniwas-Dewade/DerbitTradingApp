@@ -20,8 +20,9 @@ void Client::connect()
         auto endpoints = resolver.resolve(_host, _port);
         boost::asio::connect(ssl_stream->lowest_layer(), endpoints);
         ssl_stream->handshake(boost::asio::ssl::stream_base::client);
+        boost::asio::ip::tcp::no_delay option(true);
+        ssl_stream->lowest_layer().set_option(option);
         spdlog::info("Connected to {}:{}", _host, _port);
-
         startPing();
     } 
     catch (const boost::system::system_error& ex) 
@@ -97,6 +98,24 @@ void Client::pingServer()
     }
 }
 
+void Client::logLatency(const std::chrono::duration<double>& duration) 
+{
+    double seconds = duration.count();
+
+    if (seconds >= 1.0) 
+    {
+        spdlog::info("Program latency: {:.3f} seconds", seconds);
+    } 
+    else if (seconds >= 0.001) 
+    {
+        spdlog::info("Program latency: {:.3f} milliseconds", seconds * 1000.0);
+    } 
+    else 
+    {
+        spdlog::info("Program latency: {:.3f} microseconds", seconds * 1'000'000.0);
+    }
+}
+
 void Client::startPing() 
 {
     is_running = true;
@@ -148,7 +167,6 @@ void Client::setAccessToken(std::string &token)
 
 json Client::sendRequest(const std::string& endpoint, const std::string& method, const json& payload) 
 {
-    auto start = std::chrono::high_resolution_clock::now();
     try 
     {
         std::string serialized_payload = payload.dump();
@@ -167,27 +185,21 @@ json Client::sendRequest(const std::string& endpoint, const std::string& method,
                     << "Connection: keep-alive\r\n\r\n"
                     << serialized_payload;
 
-
         boost::asio::write(*ssl_stream, boost::asio::buffer(request_stream.str()));
-
+        auto start = std::chrono::high_resolution_clock::now();
         boost::asio::streambuf response_buffer;
+        std::size_t max_buffer_size = 1024;
+        response_buffer.prepare(max_buffer_size);
 
-        boost::asio::read_until(*ssl_stream, response_buffer, "\r\n\r\n");
+        std::size_t bytes_read = boost::asio::read(*ssl_stream, response_buffer, boost::asio::transfer_at_least(1));
+        response_buffer.commit(bytes_read);
 
+        if (response_buffer.size() > max_buffer_size) 
+        {
+            throw std::runtime_error("Buffer overflow: Maximum size exceeded");
+        }
+    
         std::istream response_stream(&response_buffer);
-        std::string http_version;
-        unsigned int status_code;
-        response_stream >> http_version >> status_code;
-
-        if (http_version.substr(0, 5) != "HTTP/") 
-        {
-            throw std::runtime_error("Invalid HTTP response");
-        }
-
-        if (status_code != 200) 
-        {
-            throw std::runtime_error("Request failed with status code " + std::to_string(status_code));
-        }
 
         std::string header;
         size_t content_length = 0;
@@ -200,22 +212,30 @@ json Client::sendRequest(const std::string& endpoint, const std::string& method,
         }
 
         std::string response_body;
+        response_body.reserve(content_length);
+
         if (response_buffer.size() > 0) 
         {
-            std::istreambuf_iterator<char> it(&response_buffer), end;
-            response_body.assign(it, end);
+            response_body.append(boost::asio::buffer_cast<const char*>(response_buffer.data()),
+                response_buffer.size()
+            );
+            response_buffer.consume(response_buffer.size());
         }
 
         while (response_body.size() < content_length) 
         {
-            boost::asio::read(*ssl_stream, response_buffer, boost::asio::transfer_at_least(1));
-            std::istreambuf_iterator<char> it(&response_buffer), end;
-            response_body.append(it, end);
+            std::vector<char> temp_buffer(8192);
+            size_t bytes_read = boost::asio::read(
+                *ssl_stream,
+                boost::asio::buffer(temp_buffer),
+                boost::asio::transfer_at_least(1)
+            );
+            response_body.append(temp_buffer.data(), bytes_read);
         }
-        
+
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> duration = end - start;
-        spdlog::info("Program latency: {} seconds", duration.count());
+        logLatency(duration);
         return json::parse(response_body);
     } 
     catch (const json::exception& ex)
