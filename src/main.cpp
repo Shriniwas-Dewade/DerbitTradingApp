@@ -1,21 +1,21 @@
 #include "Client.hpp"
 #include "spdlog/sinks/basic_file_sink.h"
 
-void setup_logging() 
-{
-    try 
-    {
-        auto file_logger = spdlog::basic_logger_mt("file_logger", "../logs/derbit_trading.log", true);
-        spdlog::register_logger(file_logger);
-        spdlog::set_default_logger(file_logger);
-        spdlog::set_level(spdlog::level::info);
-        spdlog::info("Logging setup complete.");
-    } 
-    catch (const spdlog::spdlog_ex& ex) 
-    {
-        std::cerr << "Log initialization failed: " << ex.what() << std::endl;
-    }
-}
+// void setup_logging() 
+// {
+//     try 
+//     {
+//         auto file_logger = spdlog::basic_logger_mt("file_logger", "../logs/derbit_trading.log", true);
+//         spdlog::register_logger(file_logger);
+//         spdlog::set_default_logger(file_logger);
+//         spdlog::set_level(spdlog::level::debug);
+//         spdlog::info("Logging setup complete.");
+//     } 
+//     catch (const spdlog::spdlog_ex& ex) 
+//     {
+//         std::cerr << "Log initialization failed: " << ex.what() << std::endl;
+//     }
+// }
 
 constexpr const char* clientId = "cyL_105V";
 constexpr const char* clientSecret = "QYDbVHNoHm_6glxbgasvdCnBh3yIr1eQJKelNAi2Ejk";
@@ -34,8 +34,6 @@ const nlohmann::json Client::payload = {
 int main() 
 {
     std::ios_base::sync_with_stdio(false);
-
-    setup_logging();
 
     auto start = std::chrono::high_resolution_clock::now();
     int choice;

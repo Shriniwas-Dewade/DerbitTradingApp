@@ -121,7 +121,6 @@ void Client::pingServer()
 
         if (!response.is_null()) 
         {
-            spdlog::info("Ping successful. Connection is alive.");
             std::cin.clear();
         } 
         else 
@@ -163,7 +162,7 @@ void Client::startPing()
     ping_thread = std::thread([this]() {
         while (is_running) 
         {
-            ping_timer->expires_after(std::chrono::seconds(59));
+            ping_timer->expires_after(std::chrono::seconds(30));
 
             ping_timer->async_wait([this](const boost::system::error_code& ec) {
                 if (ec) 
@@ -276,9 +275,13 @@ json Client::sendRequest(const std::string& endpoint, const std::string& method,
             response_body.append(temp_buffer.data(), bytes_read);
         }
 
-        auto end = std::chrono::high_resolution_clock::now();
-        std::chrono::duration<double> duration = end - start;
-        logLatency(duration);
+        if (serialized_payload.find("public/test") == std::string::npos) 
+        {
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double> duration = end - start;
+            logLatency(duration);
+        }
+
         return json::parse(response_body);
     } 
     catch (const json::exception& ex)
