@@ -1,14 +1,47 @@
 #include "Client.hpp"
-#include <chrono>
+#include <boost/beast/websocket.hpp>
+#include <boost/beast/core.hpp>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/ssl/error.hpp>
 #include <boost/asio/write.hpp>
+#include <boost/system/error_code.hpp>
+#include <boost/beast/websocket/stream.hpp>
+#include <boost/beast/websocket/teardown.hpp>
+#include <boost/asio/ssl/stream.hpp>
+#include <boost/asio/ip/tcp.hpp>
+
+namespace boost 
+{
+    namespace beast 
+    {
+
+        void teardown(
+            boost::beast::role_type role,
+            boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& stream,
+            boost::system::error_code& ec)
+        {
+            // Perform SSL shutdown
+            stream.shutdown(ec);
+        }
+
+    } // namespace beast
+} // namespace boost
+
 
 using json = nlohmann::json;
 
 Client::Client(const std::string& host, const std::string& port, const std::string& clientId, const std::string& secreatKey)
-    : _ws(boost::asio::ip::tcp::socket(_io_context)), _ssl_context(boost::asio::ssl::context::sslv23_client), _host(host), _port(port), _clientId(clientId), _secreatKey(secreatKey)
+    :_io_context_ws(), _ssl_context_ws(boost::asio::ssl::context::tlsv12_client), _ws(_io_context_ws, _ssl_context_ws), _ssl_context(boost::asio::ssl::context::tlsv13_client), _host(host), _port(port), _clientId(clientId), _secreatKey(secreatKey)
 {
+    _ssl_context_ws.set_default_verify_paths();
+    _ssl_context_ws.set_verify_mode(boost::asio::ssl::verify_peer);
+     _ssl_context.set_options(
+        boost::asio::ssl::context::default_workarounds |
+        boost::asio::ssl::context::no_sslv3 |
+        boost::asio::ssl::context::no_tlsv1 |
+        boost::asio::ssl::context::no_tlsv1_1 |
+        boost::asio::ssl::context::no_tlsv1_2
+    );
     ssl_stream = std::make_shared<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>>(_io_context, _ssl_context);
 }
 
@@ -41,9 +74,15 @@ Client::~Client()
             ssl_stream->lowest_layer().close();
         }
         
-        if (_ws.is_open()) 
+        if (_ws.is_open())
         {
-            _ws.close(boost::beast::websocket::close_code::normal);
+            boost::system::error_code ec;
+            _ws.close(boost::beast::websocket::close_code::normal, ec);
+            
+            if (ec) 
+            {
+                spdlog::error("WebSocket close error: {}", ec.message());
+            }
         }
 
         stopPing();
@@ -124,12 +163,12 @@ void Client::startPing()
     ping_thread = std::thread([this]() {
         while (is_running) 
         {
-            ping_timer->expires_after(std::chrono::seconds(50));
+            ping_timer->expires_after(std::chrono::seconds(45));
 
             ping_timer->async_wait([this](const boost::system::error_code& ec) {
                 if (ec) 
                 {
-                    spdlog::error("Ping timer error: {}", ec.message());
+                    spdlog::info("Ping timer : {}", ec.message());
                 } 
                 else 
                 {
@@ -146,10 +185,14 @@ void Client::startPing()
 void Client::stopPing() 
 {
     is_running = false;
-    if (ping_timer) {
+    
+    if (ping_timer) 
+    {
         ping_timer->cancel();
     }
-    if (ping_thread.joinable()) {
+
+    if (ping_thread.joinable()) 
+    {
         ping_thread.join();
     }
 }
@@ -169,6 +212,7 @@ json Client::sendRequest(const std::string& endpoint, const std::string& method,
 {
     try 
     {
+        auto start = std::chrono::high_resolution_clock::now();
         std::string serialized_payload = payload.dump();
 
         std::ostringstream request_stream;
@@ -186,7 +230,6 @@ json Client::sendRequest(const std::string& endpoint, const std::string& method,
                     << serialized_payload;
 
         boost::asio::write(*ssl_stream, boost::asio::buffer(request_stream.str()));
-        auto start = std::chrono::high_resolution_clock::now();
         boost::asio::streambuf response_buffer;
         std::size_t max_buffer_size = 1024;
         response_buffer.prepare(max_buffer_size);
@@ -429,17 +472,22 @@ void Client::initWebSocket()
 {
     try 
     {
-        boost::asio::ip::tcp::resolver resolver(_io_context);
-        auto const results = resolver.resolve("test.deribit.com", "443");
-        boost::asio::connect(_ws.next_layer(), results.begin(), results.end());
+        boost::asio::ip::tcp::resolver resolver(_io_context_ws);
+        auto results = resolver.resolve(_host, _port);
 
-        _ws.handshake("test.deribit.com", "/ws/api/v2");
+        auto& raw_socket = _ws.next_layer().next_layer();
+        boost::asio::connect(raw_socket, results);
 
-        spdlog::info("WebSocket connection established.");
+        _ws.next_layer().handshake(boost::asio::ssl::stream_base::client);
+
+        _ws.set_option(boost::beast::websocket::stream_base::timeout::suggested(boost::beast::role_type::client));
+        _ws.handshake(_host, "/ws/api/v2");
+
+        spdlog::info("WebSocket connection established with {}", _host);
     } 
-    catch (const std::exception& e) 
+    catch (const std::exception& ex) 
     {
-        spdlog::error("WebSocket initialization error: {}", e.what());
+        spdlog::error("WebSocket initialization error: {}", ex.what());
         throw;
     }
 }

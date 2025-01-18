@@ -12,12 +12,12 @@
 #include <boost/asio/ssl.hpp>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
+#include <thread>
 
 class Client {
 private:
     boost::asio::io_context _io_context;
     boost::asio::ssl::context _ssl_context;
-    boost::beast::websocket::stream<boost::asio::ip::tcp::socket> _ws;
     std::shared_ptr<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> ssl_stream;
 
     std::unique_ptr<boost::asio::steady_timer> ping_timer;
@@ -34,6 +34,10 @@ private:
 
     void addToCache(const std::string& key, const std::string& payload);
     std::string getFromCache(const std::string& key);
+    boost::asio::ssl::context _ssl_context_ws;
+    boost::asio::io_context _io_context_ws;
+    boost::beast::websocket::stream<boost::asio::ssl::stream<boost::asio::ip::tcp::socket>> _ws;
+
 
 public:
     Client(const std::string& host, const std::string& port, const std::string& clientId, const std::string& secreatKey);
