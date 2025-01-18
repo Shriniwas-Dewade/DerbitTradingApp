@@ -335,7 +335,7 @@ void Client::storeOrder(const json& orderResponse)
         std::string instrumentName = order["instrument_name"];
         std::string orderId = order["order_id"];
 
-        openOrders[instrumentName] = orderId;
+        openOrders.insert({instrumentName, orderId});
 
         std::ofstream outFile("order_history.json", std::ios::app);
         if (outFile) 
@@ -373,7 +373,7 @@ void Client::loadOrderHistory()
             nlohmann::json orderData = nlohmann::json::parse(line);
             std::string instrumentName = orderData["instrument_name"];
             std::string orderId = orderData["order_id"];
-            openOrders[instrumentName] = orderId;
+            openOrders.insert({instrumentName, orderId});
         } 
         catch (const std::exception& ex) 
         {

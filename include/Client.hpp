@@ -28,7 +28,7 @@ private:
     std::string _host, _port, _clientId, _secreatKey, _accessToken;
 
     std::unordered_map<std::string, std::string> payload_cache;
-    std::unordered_map<std::string, std::string> openOrders;
+    std::unordered_multimap<std::string, std::string> openOrders;
     std::list<std::string> cache_keys;
     
     static constexpr size_t max_cache_size = 100;
