@@ -45,6 +45,7 @@ int main()
     try
     {
         client.connect();
+        client.loadOrderHistory();
         nlohmann::json response = client.sendRequest("/api/v2/public/auth", "POST ", client.payload);
 
         if (response.contains("result") && response["result"].contains("access_token")) 
@@ -53,8 +54,6 @@ int main()
             client.setAccessToken(accessToken);
             spdlog::info("Authenticated successfully. Access token: {}", accessToken);
         }
-
-        spdlog::info("Connected succesfully...");
     }
     catch(const std::exception& e)
     {
@@ -65,6 +64,14 @@ int main()
     {
         client.printMenu();
         std::cin >> choice;
+
+        if (choice < 1 || choice > 7) 
+        {
+            std::cout << "Invalid choice, please try again.\n";
+            std::cin.clear();
+            continue;
+        }
+
         switch (choice) 
         {
             case 1: 
@@ -79,6 +86,7 @@ int main()
             }
             case 2: 
             {
+                client.listOpenOrders();
                 std::string order_id;
                 std::cout << "Enter order ID to cancel: ";
                 std::cin >> order_id;
@@ -87,6 +95,7 @@ int main()
             }
             case 3: 
             {
+                client.listOpenOrders();
                 std::string order_id;
                 double amount, price;
                 std::cout << "Enter order ID, new amount, and new price to modify order: ";
@@ -110,14 +119,25 @@ int main()
             case 6: 
             {
                 std::string symbol;
+                int seconds;
                 std::cout << "Enter symbol for subscription (e.g., BTC-PERPETUAL): ";
                 std::cin >> symbol;
+                std::cout << "Enter number of seconds to stream market data: ";
+                std::cin >> seconds;
 
                 try 
                 {
-                    client.initWebSocket();
+                    if (!client._wsConnected)
+                    {
+                        client.initWebSocket();
+                    }
+                    auto startTimestamp = std::chrono::high_resolution_clock::now();
                     client.subscribeToMarketData(symbol);
-                    client.streamMarketData();
+                    client.streamMarketData(seconds);
+
+                    auto endTimestamp = std::chrono::high_resolution_clock::now();
+                    auto elapsed_time = endTimestamp - startTimestamp;
+                    spdlog::info("Market data streaming end to end latency : {}", elapsed_time.count());
                 } 
                 catch (const std::exception& e) 
                 {

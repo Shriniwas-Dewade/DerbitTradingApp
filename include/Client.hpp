@@ -5,6 +5,7 @@
 #include <memory>
 #include <iostream>
 #include <sstream>
+#include <fstream>
 #include <list>
 #include <unordered_map>
 #include <boost/asio.hpp>
@@ -27,6 +28,7 @@ private:
     std::string _host, _port, _clientId, _secreatKey, _accessToken;
 
     std::unordered_map<std::string, std::string> payload_cache;
+    std::unordered_map<std::string, std::string> openOrders;
     std::list<std::string> cache_keys;
     
     static constexpr size_t max_cache_size = 100;
@@ -56,6 +58,9 @@ public:
     void stopPing();
 
     void placeOrder(const std::string& instrument_name, double amount, double price, const std::string& order_type);
+    void storeOrder(const nlohmann::json& orderResponse);
+    void listOpenOrders(); 
+    void loadOrderHistory();
     void modifyOrder(const std::string& order_id, double amount, double price);
     void cancelOrder(const std::string& order_id);
     void getOrderBook(const std::string& instrument_name);
@@ -63,9 +68,10 @@ public:
 
     void initWebSocket();
     void subscribeToMarketData(const std::string& symbol);
-    void streamMarketData();
+    void streamMarketData(const int &seconds);
 
     static const nlohmann::json payload;
+    bool _wsConnected;
 
     nlohmann::json getCachedPayload(const std::string& endpoint, const std::string& method, const nlohmann::json& params);
 };

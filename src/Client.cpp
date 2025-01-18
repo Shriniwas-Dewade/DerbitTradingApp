@@ -31,7 +31,7 @@ namespace boost
 using json = nlohmann::json;
 
 Client::Client(const std::string& host, const std::string& port, const std::string& clientId, const std::string& secreatKey)
-    :_io_context_ws(), _ssl_context_ws(boost::asio::ssl::context::tlsv12_client), _ws(_io_context_ws, _ssl_context_ws), _ssl_context(boost::asio::ssl::context::tlsv13_client), _host(host), _port(port), _clientId(clientId), _secreatKey(secreatKey)
+    : _wsConnected(false), _io_context_ws(), _ssl_context_ws(boost::asio::ssl::context::tlsv12_client), _ws(_io_context_ws, _ssl_context_ws), _ssl_context(boost::asio::ssl::context::tlsv13_client), _host(host), _port(port), _clientId(clientId), _secreatKey(secreatKey)
 {
     _ssl_context_ws.set_default_verify_paths();
     _ssl_context_ws.set_verify_mode(boost::asio::ssl::verify_peer);
@@ -122,7 +122,7 @@ void Client::pingServer()
         if (!response.is_null()) 
         {
             spdlog::info("Ping successful. Connection is alive.");
-            printMenu();
+            std::cin.clear();
         } 
         else 
         {
@@ -163,7 +163,7 @@ void Client::startPing()
     ping_thread = std::thread([this]() {
         while (is_running) 
         {
-            ping_timer->expires_after(std::chrono::seconds(45));
+            ping_timer->expires_after(std::chrono::seconds(59));
 
             ping_timer->async_wait([this](const boost::system::error_code& ec) {
                 if (ec) 
@@ -317,7 +317,7 @@ void Client::placeOrder(const std::string& instrument_name, double amount, doubl
             spdlog::error("Order placement failed: {}", response["error"].dump(4));
             throw std::runtime_error("Order placement error");
         }
-
+        storeOrder(response);
         spdlog::info("Order placed successfully: {}", response.dump(4));
     }
     catch (const std::exception& e)
@@ -326,6 +326,78 @@ void Client::placeOrder(const std::string& instrument_name, double amount, doubl
         throw;
     }
 }
+
+void Client::storeOrder(const json& orderResponse)
+{
+    try 
+    {
+        const auto& order = orderResponse["result"]["order"];
+        std::string instrumentName = order["instrument_name"];
+        std::string orderId = order["order_id"];
+
+        openOrders[instrumentName] = orderId;
+
+        std::ofstream outFile("order_history.json", std::ios::app);
+        if (outFile) 
+        {
+            nlohmann::json orderData = {
+                {"instrument_name", instrumentName},
+                {"order_id", orderId}
+            };
+            outFile << orderData.dump() << std::endl;
+            outFile.close();
+        }
+
+        spdlog::info("Order stored: Instrument={}, Order ID={}", instrumentName, orderId);
+    } 
+    catch (const std::exception& ex) 
+    {
+        spdlog::error("Error storing order: {}", ex.what());
+    }
+}
+
+void Client::loadOrderHistory()
+{
+    std::ifstream inFile("order_history.json");
+    if (!inFile) 
+    {
+        spdlog::info("No order history file found. Starting fresh.");
+        return;
+    }
+
+    std::string line;
+    while (std::getline(inFile, line)) 
+    {
+        try 
+        {
+            nlohmann::json orderData = nlohmann::json::parse(line);
+            std::string instrumentName = orderData["instrument_name"];
+            std::string orderId = orderData["order_id"];
+            openOrders[instrumentName] = orderId;
+        } 
+        catch (const std::exception& ex) 
+        {
+            spdlog::error("Error loading order history: {}", ex.what());
+        }
+    }
+
+    inFile.close();
+}
+
+void Client::listOpenOrders()
+{
+    if (openOrders.empty()) 
+    {
+        spdlog::info("No open orders found.");
+        return;
+    }
+
+    for (const auto& [instrument, orderId] : openOrders) 
+    {
+        std::cout << "Instrument: " << instrument << ", Order ID: " << orderId << std::endl;
+    }
+}
+
 
 void Client::cancelOrder(const std::string& order_id)
 {
@@ -389,11 +461,11 @@ void Client::getOrderBook(const std::string& instrument_name)
         {"depth", 5}
     };
 
-    json orderModifyPayload = getCachedPayload("/api/v2/public/get_order_book", "public/get_order_book", params);
+    json orderModifyPayload = getCachedPayload("/api/v2/private/get_open_orders", "private/get_open_orders", params);
 
     try
     {
-        json response = sendRequest("/api/v2/public/get_order_book", "POST", orderModifyPayload);
+        json response = sendRequest("/api/v2/private/get_open_orders", "POST", orderModifyPayload);
         if (response.contains("result")) 
         {
             spdlog::info("Order Book : {}", response.dump(4));
@@ -484,6 +556,38 @@ void Client::initWebSocket()
         _ws.handshake(_host, "/ws/api/v2");
 
         spdlog::info("WebSocket connection established with {}", _host);
+
+        nlohmann::json payload = {
+            {"jsonrpc", "2.0"},
+            {"id", 0},
+            {"method", "public/auth"},
+            {"params", {
+                {"grant_type", "client_credentials"},
+                {"client_id", _clientId},
+                {"client_secret", _secreatKey}
+            }}
+        };
+
+        std::string payload_str = payload.dump();
+        _ws.write(boost::asio::buffer(payload_str));
+        spdlog::info("Authentication payload sent: {}", payload_str);
+
+        boost::beast::flat_buffer buffer;
+        _ws.read(buffer);
+
+        std::string response_str = boost::beast::buffers_to_string(buffer.data());
+        nlohmann::json response = nlohmann::json::parse(response_str);
+
+        if (response.contains("result")) 
+        {
+            spdlog::info("WebSocket authenticated successfully.");
+            _wsConnected = true;
+        } 
+        else 
+        {
+            spdlog::error("WebSocket authentication failed: {}", response.dump());
+            throw std::runtime_error("WebSocket authentication failed");
+        }
     } 
     catch (const std::exception& ex) 
     {
@@ -513,10 +617,12 @@ void Client::subscribeToMarketData(const std::string& symbol)
     }
 }
 
-void Client::streamMarketData()
+void Client::streamMarketData(const int &seconds)
 {
     try 
     {
+        auto startTimestamp = std::chrono::high_resolution_clock::now();
+
         boost::beast::flat_buffer buffer;
         while (true) 
         {
@@ -524,6 +630,14 @@ void Client::streamMarketData()
             std::string message = boost::beast::buffers_to_string(buffer.data());
             spdlog::info("Market Data Received: {}", message);
             buffer.clear();
+
+            auto endTimestamp = std::chrono::high_resolution_clock::now();
+            auto elapsed_time = std::chrono::duration_cast<std::chrono::seconds>(endTimestamp - startTimestamp).count();
+            if (elapsed_time >= seconds)
+            {
+                spdlog::info("Market data streaming completed.");
+                break;
+            }
         }
     } 
     catch (const std::exception& e) 
