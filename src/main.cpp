@@ -17,8 +17,8 @@
 //     }
 // }
 
-constexpr const char* clientId = "cyL_105V";
-constexpr const char* clientSecret = "QYDbVHNoHm_6glxbgasvdCnBh3yIr1eQJKelNAi2Ejk";
+constexpr const char* clientId = "";
+constexpr const char* clientSecret = "";
 
 const nlohmann::json Client::payload = {
     {"jsonrpc", "2.0"},
